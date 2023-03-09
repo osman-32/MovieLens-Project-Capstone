@@ -1,317 +1,291 @@
-
-#install.packages("tidyverse")
-#install.packages("dslabs")
-#install.packages("caret")
-#install.packages("data.table")
-
-
-library(tidyverse)
-library(dslabs)
-library(caret)
-library(data.table)
-
 # Clear environment
-rm(list = ls())
+rm(list=ls())
 
 
-# Setting the random number generator seed so that our results are reproducible
-set.seed(123)
+#****************************************************************************
+# MovieLens Capstone Project - Osman Yardimci
+# HarvardX Data Science Professional Certificate PH125.9x
+#****************************************************************************
 
-# ---------------------------- Data manipulation -------------------------------------
 
-# First, read in the data
-#Let's obtain the data from the given URL.
+# Installing required packages
+packages <- c("dslabs", "ggplot2", "lubridate", "tidyverse", "caret", "data.table", "stringr")
+if (!all(packages %in% installed.packages())) {
+  install.packages(packages[!packages %in% installed.packages()], repos = "http://cran.us.r-project.org")
+}
 
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+# Create a temporary file
 dl <- tempfile()
-download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
 
-#using the fread function to read the data table.
+# Download the dataset zip file and save it to the temporary file
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", destfile = dl)
+
+#fread() is used to read the modified text into a data table called ratings
 ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
                  col.names = c("userId", "movieId", "rating", "timestamp"))
 
-head(ratings)
-
+# Similarly, fread() is used to read the modified text into a data table called movies
 movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
 colnames(movies) <- c("movieId", "title", "genres")
 
 # if using R 4.0 or later:
-movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
-                                           title = as.character(title),
-                                           genres = as.character(genres))
-head(movies)
+movies <- data.frame(movies)
+movies$movieId <- as.numeric(movies$movieId)
+movies$title <- as.character(movies$title)
+movies$genres <- as.character(movies$genres)
 
-movielens <- left_join(ratings, movies, by = "movieId")
+movielens <- ratings %>% 
+  left_join(movies, by = "movieId")
+
+# Validation set will be 15% of MovieLens data
+set.seed(123, sample.kind = "Rounding") 
+n <- nrow(movielens)
+test_index <- sample(n, size = round(0.15 * n))
+edx <- movielens[-test_index, ]
+temp <- movielens[test_index, ]
 
 
-# Validation set will be 10% of MovieLens data
-set.seed(1, sample.kind="Rounding")
-test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.2, list = FALSE)
-edx <- movielens[-test_index,]
-temp <- movielens[test_index,]
+# Check that the userId and movieId in the validation set are also in the edx set.
+validation <- temp %>%
+  filter(movieId %in% edx$movieId, userId %in% edx$userId)
 
-# Make sure userId and movieId in validation set are also in edx set
-validation <- temp %>% 
-  semi_join(edx, by = "movieId") %>%
-  semi_join(edx, by = "userId")
-
-# Add rows removed from validation set back into edx set
-removed <- anti_join(temp, validation)
+# Return the rows removed from the validation set to the edx set.
+removed <- temp[!(temp$userId %in% validation$userId & temp$movieId %in% validation$movieId), ]
 edx <- rbind(edx, removed)
 
 rm(dl, ratings, movies, test_index, temp, movielens, removed)
 
-######################################
-# End of Provided Code
-######################################
 
-######################################
+
+#**********************************************
 # Data Exploration
-######################################
+#**********************************************
 
-# Load extra libraries for upcoming data analysis and visualization
-if(!require(dslabs)) install.packages("dslabs", repos = "http://cran.us.r-project.org")
-if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
-if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
-library(dslabs)
-library(ggplot2)
-library(lubridate)
-
-# Check any missing value in training data set "edx"
-anyNA(edx)
-# Check any missing value in final hold-out test data set "validation"
+# In the final hold-out test data set "validation," look for any missing values.
 anyNA(validation)
-# List amount of observations and variables in training data set "edx"
-dim(edx)
+
+# Investigate the training data set "edx" for any missing values.
+anyNA(edx)
+
 # List amount of observations and variables in final hold-out test data set "validation"
 dim(validation)
-head(edx)
+
+# List the number of observations and variables in the "edx" training data set.
+dim(edx)
+
+# Review the "edx" data set
 summary(edx)
 
-######################################
+#**********************************************
 # Data Pre-Processing
-######################################
+#**********************************************
 
-# Convert timestamp to year rated and add it to edx
-edx <- edx %>% mutate(year_rated = year(as_datetime(timestamp)))
+# Convert the timestamp to the year rated format and add it to edx.
+edx <- edx %>%
+  mutate(year_rated = lubridate::year(as_datetime(timestamp))) %>%
+  mutate(year_released = as.numeric(str_sub(title, -5, -2))) %>%
+  mutate(ages = year_rated - year_released)
 
-# Double check any invalid value after convertion of timestamp
+#Check for any invalid year rated and year released values.
 unique(edx$year_rated)
-
-# Extract the year released from title and add it to edx
-edx <- edx %>% mutate(year_released = as.numeric(str_sub(title,-5,-2)))
-
-# Double check any invalid value of year released
 unique(edx$year_released)
 
-# Calculate the movie age when movie was rated and add it to edx
-edx <- edx %>% mutate(ages = as.numeric(year_rated)-as.numeric(year_released))
+# Examine the odd values part
+sum(edx$ages == -1) / nrow(edx)
+sum(edx$ages == -2) / nrow(edx)
 
-# Double check any invalid value of ages
-unique(edx$ages)
+# Repeat the data pre-processing for the validation set.
+validation <- validation %>%
+  mutate(year_rated = lubridate::year(as_datetime(timestamp))) %>%
+  mutate(year_released = as.numeric(str_sub(title, -5, -2))) %>%
+  mutate(ages = year_rated - year_released)
 
-# Check odd values portion
-sum(edx$ages == -1)/nrow(edx)
-sum(edx$ages == -2)/nrow(edx)
 
-# Do the same data pre-processing for validation set
-validation <- validation %>% mutate(year_rated = year(as_datetime(timestamp)))
-validation <- validation %>% mutate(year_released = as.numeric(str_sub(title,-5,-2)))
-validation <- validation %>% mutate(ages = as.numeric(year_rated)-as.numeric(year_released))
-
-######################################
+#*****************************************
 # Methods/Analysis
-######################################
+#*****************************************
 
-### Data Analysis
+#Head - Display some of the data.
+edx %>% 
+  head() %>% 
+  print()
 
-# Head - Show some of the data
-head(edx) %>%
-  print.data.frame()
-
-# Total unique movies and users
+# Summary of the data
 summary(edx)
 
-# Number of unique movies and users in the edx dataset 
-edx %>%
-  summarize(n_users = n_distinct(userId), 
+# The number of distinct movies and users in the edx dataset.
+edx %>% 
+  summarize(n_users = n_distinct(userId),
             n_movies = n_distinct(movieId))
 
-# Plot Ratings distribution
-edx %>%
-  ggplot(aes(rating)) +
+# Plot the Distribution of Ratings
+edx %>% 
+  ggplot(aes(x = rating)) +
   geom_histogram(binwidth = 0.25, color = "orange") +
-  scale_x_discrete(limits = c(seq(0.5,5,0.5))) +
-  scale_y_continuous(breaks = c(seq(0, 3000000, 500000))) +
+  scale_x_continuous(limits = c(0, 5), breaks = seq(0.5, 5, 0.5)) +
+  scale_y_continuous(breaks = seq(0, 3000000, 500000)) +
   ggtitle("Rating distribution")
 
-# Plot number of ratings per movie
-edx %>%
-  count(movieId) %>%
-  ggplot(aes(n)) +
+# Plot the number of ratings for each movie.
+edx %>% 
+  count(movieId, name = "n") %>% 
+  ggplot(aes(x = n)) +
   geom_histogram(bins = 30, color = "orange") +
   scale_x_log10() +
   xlab("Number of ratings") +
   ylab("Number of movies") +
   ggtitle("Number of ratings per movie")
 
-
-# Table 20 movies rated only once
+# Table of 20 movies that have only been rated once
 edx %>%
   group_by(movieId) %>%
   summarize(count = n()) %>%
   filter(count == 1) %>%
   left_join(edx, by = "movieId") %>%
   group_by(title) %>%
-  summarize(rating = rating, n_rating = count) %>%
+  summarize(rating = rating, n_rating = if(is.null(count)) 0 else count) %>%
   slice(1:20) %>%
   knitr::kable()
 
-# Plot number of ratings given by users
-edx %>%
-  count(userId) %>%
-  ggplot(aes(n)) +
+# Plot the number of user ratings.
+edx %>% 
+  count(userId, name = "n") %>% 
+  ggplot(aes(x = n)) +
   geom_histogram(bins = 30, color = "orange") +
   scale_x_log10() +
-  xlab("Number of ratings") + 
+  xlab("Number of ratings") +
   ylab("Number of users") +
   ggtitle("Number of ratings given by users")
 
-# Plot mean movie ratings given by users
-edx %>%
-  group_by(userId) %>%
-  filter(n() >= 100) %>%
-  summarize(b_u = mean(rating)) %>%
-  ggplot(aes(b_u)) +
+# Plot the average user movie rating
+edx %>% 
+  group_by(userId) %>% 
+  filter(n() >= 100) %>% 
+  summarize(b_u = mean(rating)) %>% 
+  ggplot(aes(x = b_u)) +
   geom_histogram(bins = 30, color = "orange") +
   xlab("Mean rating") +
   ylab("Number of users") +
   ggtitle("Mean movie ratings given by users") +
-  scale_x_discrete(limits = c(seq(0.5,5,0.5))) +
+  scale_x_continuous(limits = c(0, 5), breaks = seq(0.5, 5, 0.5)) +
   theme_light()
 
-
-######################################
+#*****************************************
 # Modeling Approach
-######################################
+#*****************************************
 
 ### Naive Model
-
-# Compute the dataset's mean rating
 mu <- mean(edx$rating)
-mu
-
-# Test results based on simple prediction
-naive_rmse <- RMSE(validation$rating, mu)
-naive_rmse
-
-# Check results
-# Save prediction into data frame
-rmse_results <- data_frame(method = "Average movie rating model", RMSE = naive_rmse)
-rmse_results %>% knitr::kable()
+naive_rmse <- RMSE(edx$rating, mu)
+rmse_results <- data.frame(method = "Average movie rating model", RMSE = naive_rmse)
+knitr::kable(rmse_results)
 
 ### Movie Effect Model
-
-# Simple model taking into account the movie effect b_m
-# Subtract the rating minus the mean for each rating the movie received
-# Plot number of movies with the computed b_m
-movie_effects <- edx %>%
-  group_by(movieId) %>%
+movie_effects <- edx %>% 
+  group_by(movieId) %>% 
   summarize(b_m = mean(rating - mu))
-movie_effects %>% qplot(b_m, geom ="histogram", bins = 10, data = ., color = I("orange"),
-                        ylab = "Number of movies", main = "Number of movies with the computed b_m")
 
+qplot(data = movie_effects, x = b_m, geom = "histogram", bins = 10, color = I("orange"), 
+      ylab = "Number of movies", main = "Number of movies with the computed b_m")
 
-# Test and save RMSE results 
-predicted_ratings <- mu +  validation %>%
-  left_join(movie_effects, by='movieId') %>%
+predicted_ratings <- mu + validation %>% 
+  left_join(movie_effects, by = "movieId") %>% 
   pull(b_m)
-model_1_rmse <- RMSE(predicted_ratings, validation$rating)
-rmse_results <- bind_rows(rmse_results,
-                          data_frame(method="Movie effect model",  
-                                     RMSE = model_1_rmse ))
-# Check results
-rmse_results %>% knitr::kable()
+
+model_1_rmse <- RMSE(validation$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, data.frame(method = "Movie effect model", RMSE = model_1_rmse))
+knitr::kable(rmse_results)
+
 
 ### Movie + User Effect Model
-
-# Plot simplifed user effect
-user_effects<- edx %>% 
-  left_join(movie_effects, by='movieId') %>%
-  group_by(userId) %>%
-  filter(n() >= 100) %>%
-  summarize(b_u = mean(rating - mu - b_m))
-user_effects%>% qplot(b_u, geom ="histogram", bins = 30, data = ., color = I("orange"))
-
-# Estimating b_u (user effect)
-user_effects <- edx %>%
-  left_join(movie_effects, by='movieId') %>%
-  group_by(userId) %>%
+user_effects <- edx %>% 
+  left_join(movie_effects, by = "movieId") %>% 
+  group_by(userId) %>% 
+  filter(n() >= 100) %>% 
   summarize(b_u = mean(rating - mu - b_m))
 
-# Test and save RMSE results 
-predicted_ratings <- validation%>%
-  left_join(movie_effects, by='movieId') %>%
-  left_join(user_effects, by='userId') %>%
-  mutate(prediction = mu + b_m + b_u) %>%
+qplot(data = user_effects, x = b_u, geom = "histogram", bins = 30, color = I("orange"))
+
+user_effects <- edx %>% 
+  left_join(movie_effects, by = "movieId") %>% 
+  group_by(userId) %>% 
+  summarize(b_u = mean(rating - mu - b_m))
+
+predicted_ratings <- validation %>% 
+  left_join(movie_effects, by = "movieId") %>% 
+  left_join(user_effects, by = "userId") %>% 
+  mutate(prediction = mu + b_m + b_u) %>% 
   pull(prediction)
 
-model_2_rmse <- RMSE(predicted_ratings, validation$rating)
-rmse_results <- bind_rows(rmse_results,
-                          data_frame(method="Movie and user effect model",  
-                                     RMSE = model_2_rmse))
+model_2_rmse <- RMSE(validation$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, 
+                          data.frame(method = "Movie and user effect model", RMSE = model_2_rmse))
 
-# Check result
-rmse_results %>% knitr::kable()
+knitr::kable(rmse_results)
+
 
 ### Regularized Movie + User Effect Model
 
-# Lambda is a tuning parameter
-# Use cross-validation to choose it.
+# Lambda is a tuning variable.
+# Choose lambda using cross-validation.
 lambdas <- seq(0, 10, 0.25)
 
-rmses <- sapply(lambdas, function(l){
+# Define a function that computes the RMSE for a given lambda.
+compute_rmse <- function(lambda) {
   mu_reg <- mean(edx$rating)
   
-  # Regulation movie effect
+  # The movie effect has been regularized.
   b_m_reg <- edx %>%
     group_by(movieId) %>%
-    summarize(b_m_reg = sum(rating - mu_reg)/(n()+l))
+    summarize(b_m_reg = sum(rating - mu_reg)/(n() + lambda))
   
-  # Regulation user effect
+  # The user effect has been regularized.
   b_u_reg <- edx %>%
-    left_join(b_m_reg, by="movieId") %>%
+    left_join(b_m_reg, by = "movieId") %>%
     group_by(userId) %>%
-    summarize(b_u_reg = sum(rating - b_m_reg - mu_reg)/(n()+l))
+    summarize(b_u_reg = sum(rating - b_m_reg - mu_reg)/(n() + lambda))
   
-  # Calculating predicted ratings
+  # Determine predicted ratings
   predicted_ratings_b_m_u <-
     validation %>%
     left_join(b_m_reg, by = "movieId") %>%
     left_join(b_u_reg, by = "userId") %>%
     mutate(prediction = mu_reg + b_m_reg + b_u_reg) %>%
-    .$prediction
-  return(RMSE(validation$rating,predicted_ratings_b_m_u))
-})
+    pull(prediction)
+  
+  return(RMSE(validation$rating, predicted_ratings_b_m_u))
+}
+
+# Calculate the RMSE for each lambda.
+rmses <- sapply(lambdas, compute_rmse)
 
 qplot(lambdas, rmses)
 
-# For the full model, the optimal lambda is given as
+#The optimal lambda for the entire model is given as
 lambda <- lambdas[which.min(rmses)]
 lambda
 
-# Calculating regularization model RMSE: model_m_u_reg_rmse
+# Modeling the RMSE of a regularization model: model m_u_reg_rmse
 model_m_u_reg_rmse <- min(rmses)
 model_m_u_reg_rmse
 
 rmse_results <- bind_rows(rmse_results,
-                          data_frame(method="Movie + User Regularization Model",
+                          data_frame(method = "Movie + User Regularization Model",
                                      RMSE = model_m_u_reg_rmse))
 rmse_results %>% knitr::kable()
 
 
-######################################
-# Results
-######################################
 
-# RMSE results overview                                                          
-rmse_results %>% knitr::kable()
+#*****************************************
+# Results
+#*****************************************
+
+# Overview of RMSE results
+knitr::kable(rmse_results, row.names = FALSE)
+
+
+
